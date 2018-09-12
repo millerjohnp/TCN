@@ -3,37 +3,37 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import torch.optim as optim
-from TCN.poly_music.model import TCN
-from TCN.poly_music.utils import data_generator
+from model import RNNModel
+from utils import data_generator
 import numpy as np
 
 
 parser = argparse.ArgumentParser(description='Sequence Modeling - Polyphonic Music')
 parser.add_argument('--cuda', action='store_false',
                     help='use CUDA (default: True)')
-parser.add_argument('--dropout', type=float, default=0.25,
+parser.add_argument('--stabilize', action='store_true',
+                    help='use STABLE (default: False)')
+parser.add_argument('--dropout', type=float, default=0.0,
                     help='dropout applied to layers (default: 0.25)')
-parser.add_argument('--clip', type=float, default=0.2,
+parser.add_argument('--clip', type=float, default=1,
                     help='gradient clip, -1 means no clip (default: 0.2)')
-parser.add_argument('--epochs', type=int, default=100,
+parser.add_argument('--epochs', type=int, default=500,
                     help='upper epoch limit (default: 100)')
-parser.add_argument('--ksize', type=int, default=5,
-                    help='kernel size (default: 5)')
-parser.add_argument('--levels', type=int, default=4,
-                    help='# of levels (default: 4)')
 parser.add_argument('--log-interval', type=int, default=100, metavar='N',
                     help='report interval (default: 100')
-parser.add_argument('--lr', type=float, default=1e-3,
-                    help='initial learning rate (default: 1e-3)')
-parser.add_argument('--optim', type=str, default='Adam',
+parser.add_argument('--lr', type=float, default=1e-2,
+                    help='initial learning rate (default: 4e-3)')
+parser.add_argument('--optim', type=str, default='SGD',
                     help='optimizer to use (default: Adam)')
-parser.add_argument('--nhid', type=int, default=150,
+parser.add_argument('--nhid', type=int, default=256,
                     help='number of hidden units per layer (default: 150)')
-parser.add_argument('--data', type=str, default='Nott',
+parser.add_argument('--data', type=str, default='JSB',
                     help='the dataset to run (default: Nott)')
+parser.add_argument('--rnn_type', type=str, default='LSTM',
+                    help='the model type to use')
+parser.add_argument('--logdir', type=str, help="where to store shit")
 parser.add_argument('--seed', type=int, default=1111,
                     help='random seed (default: 1111)')
-
 args = parser.parse_args()
 
 # Set the random seed manually for reproducibility.
@@ -46,12 +46,11 @@ print(args)
 input_size = 88
 X_train, X_valid, X_test = data_generator(args.data)
 
-n_channels = [args.nhid] * args.levels
-kernel_size = args.ksize
+nhid = args.nhid
 dropout = args.dropout
+rnn_type = args.rnn_type
 
-model = TCN(input_size, input_size, n_channels, kernel_size, dropout=args.dropout)
-
+model = RNNModel(rnn_type, input_size, input_size, nhid)
 
 if args.cuda:
     model.cuda()
@@ -99,14 +98,18 @@ def train(ep):
                             torch.matmul((1 - y), torch.log(1 - output).float().t()))
         total_loss += loss.data[0]
         count += output.size(0)
-
+        loss.backward()
         if args.clip > 0:
             torch.nn.utils.clip_grad_norm(model.parameters(), args.clip)
-        loss.backward()
         optimizer.step()
+        if args.stabilize:
+            model.stabilize()
         if idx > 0 and idx % args.log_interval == 0:
             cur_loss = total_loss / count
-            print("Epoch {:2d} | lr {:.5f} | loss {:.5f}".format(ep, lr, cur_loss))
+            message = "Epoch {:2d} | lr {:.5f} | loss {:.5f}".format(ep, lr, cur_loss)
+            print(message)
+            with open(args.logdir, "a") as handle:
+                handle.write(message + "\n")
             total_loss = 0.0
             count = 0
 
